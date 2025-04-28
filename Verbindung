@@ -1,64 +1,85 @@
 VBA
 
-Sub ResetCAPL()
-    ' Path to trigger file
-    Dim triggerFile As String
-    triggerFile = "C:\Temp\reset_trigger.txt"
+Option Explicit
+
+'-- holds our connection to CANoe
+Dim canoeApp As CANoe.Application
+Dim resetFn  As CANoe.CAPLFunction
+
+Sub StartCANoe()
+    ' 1) Launch or attach to CANoe
+    Set canoeApp = CreateObject("CANoe.Application")
     
-    ' Write "RESET" to trigger CAPL action
-    Open triggerFile For Output As #1
-    Print #1, "RESET"
-    Close #1
+    ' 2) Open your config (update the path)
+    canoeApp.Open "C:\Projects\MyTest\MyConfig.cfg"
     
-    ' Optional: Read previous data from CAPL's output file
-    Dim dataFile As String
-    dataFile = "C:\Temp\previous_data.csv"
-    If Dir(dataFile) <> "" Then
-        Workbooks.Open dataFile
-    Else
-        MsgBox "No data found."
-    End If
+    ' 3) Compile CAPL (good practice) & start measurement
+    canoeApp.CAPL.Compile
+    canoeApp.Measurement.Start
+    
+    ' 4) Grab the ResetCounter CAPL function (must do this in OnInit
+    '    – here we cheat by just calling it once after the Start)
+    Set resetFn = canoeApp.CAPL.GetFunction("ResetCounter")
 End Sub
+
+Sub LogAndReset()
+    Dim prev As Long
+    Dim vars As CANoe.Variables
+    
+    ' 1) Read the System Variable General.PreviousReading
+    Set vars = canoeApp.System.Namespaces("General").Variables
+    prev = vars("PreviousReading").Value
+    
+    ' 2) Append it in Excel
+    With ThisWorkbook.Sheets("TestData")
+      .Cells(.Rows.Count, 1).End(xlUp).Offset(1, 0).Value = prev
+    End With
+    
+    ' 3) Now call into CAPL to reset the counter
+    resetFn.Call
+End Sub
+
+Sub StopCANoe()
+    If canoeApp.Measurement.Running Then
+        canoeApp.Measurement.Stop
+    End If
+    canoeApp.Quit
+    Set canoeApp = Nothing
+End Sub
+
 
 CAPL
 
+// 1) Define a System Variable namespace/variable (you can also set this up
+//    in the GUI - see CANoe’s System Variables dialog)
+on start {
+  SysDefineNamespace("General");
+  SysDefineVariableInt("General", "PreviousReading", 0);
+}
+
+// 2) Regularly sample your signal & update the SysVar
 variables {
-  char triggerFile[] = "C:\\Temp\\reset_trigger.txt";
-  char dataFile[] = "C:\\Temp\\previous_data.csv";
-  int resetFlag = 0;
+  msTimer sampleTimer;
+  int     currentReading;
 }
 
 on start {
-  // Initialize timer to check for triggers
-  setTimer(CheckTrigger, 100); // Check every 100ms
+  setTimer(sampleTimer, 1000);       // e.g. sample every second
 }
 
-on timer CheckTrigger {
-  if (fileExists(triggerFile)) {
-    // Read the trigger
-    dword fileHandle;
-    char buffer[10];
-    fileHandle = openFileRead(triggerFile);
-    fileGetString(buffer, elcount(buffer), fileHandle);
-    closeFile(fileHandle);
-    
-    if (strstr(buffer, "RESET") != -1) {
-      // Save previous data before resetting
-      SavePreviousData();
-      
-      // Reset your test variables here
-      resetFlag = 1;
-      
-      // Delete the trigger file to avoid loops
-      fileDelete(triggerFile);
-    }
+on timer sampleTimer {
+  currentReading = GetMyTestReading();  // your custom function
+  SysSetVariableInt("General", "PreviousReading", currentReading);
+  setTimer(sampleTimer, 1000);
+}
+
+// 3) Expose a callable reset function
+program callable {
+  // ResetCounter will be callable via COM
+  void ResetCounter() {
+    // (Excel will have already logged the old reading)
+    currentReading = 0;
+    // Optionally update the SysVar immediately, too
+    SysSetVariableInt("General", "PreviousReading", currentReading);
   }
-}
-
-void SavePreviousData() {
-  dword handle;
-  handle = openFileWrite(dataFile);
-  // Write your data to the file (example)
-  fileWrite(handle, "Time,Value1,Value2", ...);
-  closeFile(handle);
 }
