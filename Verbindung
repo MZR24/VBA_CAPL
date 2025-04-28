@@ -1,0 +1,64 @@
+VBA
+
+Sub ResetCAPL()
+    ' Path to trigger file
+    Dim triggerFile As String
+    triggerFile = "C:\Temp\reset_trigger.txt"
+    
+    ' Write "RESET" to trigger CAPL action
+    Open triggerFile For Output As #1
+    Print #1, "RESET"
+    Close #1
+    
+    ' Optional: Read previous data from CAPL's output file
+    Dim dataFile As String
+    dataFile = "C:\Temp\previous_data.csv"
+    If Dir(dataFile) <> "" Then
+        Workbooks.Open dataFile
+    Else
+        MsgBox "No data found."
+    End If
+End Sub
+
+CAPL
+
+variables {
+  char triggerFile[] = "C:\\Temp\\reset_trigger.txt";
+  char dataFile[] = "C:\\Temp\\previous_data.csv";
+  int resetFlag = 0;
+}
+
+on start {
+  // Initialize timer to check for triggers
+  setTimer(CheckTrigger, 100); // Check every 100ms
+}
+
+on timer CheckTrigger {
+  if (fileExists(triggerFile)) {
+    // Read the trigger
+    dword fileHandle;
+    char buffer[10];
+    fileHandle = openFileRead(triggerFile);
+    fileGetString(buffer, elcount(buffer), fileHandle);
+    closeFile(fileHandle);
+    
+    if (strstr(buffer, "RESET") != -1) {
+      // Save previous data before resetting
+      SavePreviousData();
+      
+      // Reset your test variables here
+      resetFlag = 1;
+      
+      // Delete the trigger file to avoid loops
+      fileDelete(triggerFile);
+    }
+  }
+}
+
+void SavePreviousData() {
+  dword handle;
+  handle = openFileWrite(dataFile);
+  // Write your data to the file (example)
+  fileWrite(handle, "Time,Value1,Value2", ...);
+  closeFile(handle);
+}
